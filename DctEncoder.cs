@@ -61,8 +61,16 @@ internal sealed class DctEncoder
         foreach (var comp in _structure.Components)
             blockIndices[comp.Id] = 0;
 
+        int rstCount = 0;
         for (int mcu = 0; mcu < totalMcu; mcu++)
         {
+            if (_structure.RestartInterval > 0 && mcu > 0 && mcu % _structure.RestartInterval == 0)
+            {
+                writer.WriteRestartMarker(rstCount++);
+                foreach (var comp in _structure.Components)
+                    prevDc[comp.Id] = 0;
+            }
+
             foreach (var comp in _structure.Components)
             {
                 int hFactor = (comp.SamplingFactor >> 4) & 0x0F;
@@ -110,12 +118,29 @@ internal sealed class DctEncoder
         }
 
         // 编码 AC
+        int lastNonZero = 0;
+        for (int i = 63; i >= 1; i--)
+        {
+            if (block[zigzag[i]] != 0)
+            {
+                lastNonZero = i;
+                break;
+            }
+        }
+
+        if (lastNonZero == 0)
+        {
+            _acEncoders[mapping.acId].EncodeSymbol(writer, 0x00); // EOB
+            return;
+        }
+
         int runLength = 0;
-        for (int i = 1; i < 64; i++)
+        for (int i = 1; i <= lastNonZero; i++)
         {
             int zigzagIdx = zigzag[i];
             int coeff = block[zigzagIdx];
-            if (coeff == 0)
+
+            if (i < lastNonZero && coeff == 0)
             {
                 runLength++;
                 if (runLength == 16)
@@ -126,24 +151,13 @@ internal sealed class DctEncoder
             }
             else
             {
-                while (runLength > 16)
+                while (runLength >= 16)
                 {
                     _acEncoders[mapping.acId].EncodeSymbol(writer, 0xF0); // ZRL
                     runLength -= 16;
                 }
 
                 int coeffSize = GetCoeffSize(coeff);
-                // 容错：如果系数为0（不应该发生），当作零处理
-                if (coeffSize == 0)
-                {
-                    runLength++;
-                    if (runLength == 16)
-                    {
-                        _acEncoders[mapping.acId].EncodeSymbol(writer, 0xF0); // ZRL
-                        runLength = 0;
-                    }
-                    continue;
-                }
                 int symbol = (runLength << 4) | coeffSize;
                 _acEncoders[mapping.acId].EncodeSymbol(writer, symbol);
 
@@ -154,7 +168,8 @@ internal sealed class DctEncoder
                 runLength = 0;
             }
         }
-        if (runLength > 0)
+
+        if (lastNonZero < 63)
         {
             _acEncoders[mapping.acId].EncodeSymbol(writer, 0x00); // EOB
         }

@@ -1,3 +1,7 @@
+using System.Runtime.CompilerServices;
+
+[assembly: InternalsVisibleTo("JpegStego.Tests")]
+
 ﻿namespace JpegStego;
 
 internal static class Program

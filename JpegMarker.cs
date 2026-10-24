@@ -66,8 +66,8 @@ internal sealed class JpegComponentInfo
     public byte Id { get; init; }
     public byte SamplingFactor { get; init; } // high 4=H, low 4=V
     public byte QuantTableId { get; init; }
-    public byte DcTableId { get; init; }
-    public byte AcTableId { get; init; }
+    public byte DcTableId { get; set; }
+    public byte AcTableId { get; set; }
 }
 
 internal sealed class QuantTable
