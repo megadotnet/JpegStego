@@ -25,15 +25,12 @@ internal sealed class DctDecoder
 
     private void BuildCodecs()
     {
-        // 确保 Huffman 表完整（某些编码器生成的表可能缺少符号）
         foreach (var ht in _structure.HuffTablesDC)
         {
-            HuffHelper.EnsureDcTable(ht);
             _dcDecoders[ht.Id] = new HuffmanCodec(ht);
         }
         foreach (var ht in _structure.HuffTablesAC)
         {
-            HuffHelper.EnsureAcTable(ht);
             _acDecoders[ht.Id] = new HuffmanCodec(ht);
         }
         foreach (var qt in _structure.QuantTables)

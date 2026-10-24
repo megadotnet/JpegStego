@@ -104,4 +104,26 @@ public class StegoTests
         Assert.NotNull(reencodedScan);
         Assert.True(reencodedScan.Length > 0);
     }
+
+    [Fact]
+    public void TestUploadedPhotoEmbedAndExtract()
+    {
+        string photoPath = "/tmp/file_attachments/photo.jpg";
+        if (!File.Exists(photoPath)) return;
+
+        string secretText = "Hello world from test uploaded photo!";
+        string outputJpeg = Path.GetTempFileName() + ".jpg";
+
+        try
+        {
+            Steganographer.Embed(photoPath, outputJpeg, secretText);
+            string extractedText = Steganographer.Extract(outputJpeg);
+            Assert.Equal(secretText, extractedText);
+        }
+        finally
+        {
+            if (File.Exists(outputJpeg))
+                File.Delete(outputJpeg);
+        }
+    }
 }

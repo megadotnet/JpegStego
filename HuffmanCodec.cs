@@ -21,7 +21,6 @@ internal sealed class HuffmanCodec
     public HuffmanCodec(HuffTable table)
     {
         BuildDecodeTree(table);
-        CompleteTree();  // 填充缺失的子节点
         BuildEncodeTable(table);
     }
 
@@ -39,44 +38,6 @@ internal sealed class HuffmanCodec
                 code++;
             }
             code <<= 1;
-        }
-    }
-
-    /// <summary>
-    /// 填充缺失的子节点，使树完整
-    /// 对于不完整的 Huffman 表（某些编码器生成的），将缺失的子节点用默认符号填充
-    /// </summary>
-    private void CompleteTree()
-    {
-        var queue = new Queue<Node>();
-        queue.Enqueue(_root);
-        
-        while (queue.Count > 0)
-        {
-            var node = queue.Dequeue();
-            
-            // 叶节点跳过
-            if (node.Symbol >= 0) continue;
-            
-            // 缺失左子节点（0）- 用默认符号 0 填充
-            if (node.Left == null)
-            {
-                node.Left = new Node { Symbol = 0 };
-            }
-            else if (node.Left.Symbol < 0)
-            {
-                queue.Enqueue(node.Left);
-            }
-            
-            // 缺失右子节点（1）- 用默认符号 0 填充
-            if (node.Right == null)
-            {
-                node.Right = new Node { Symbol = 0 };
-            }
-            else if (node.Right.Symbol < 0)
-            {
-                queue.Enqueue(node.Right);
-            }
         }
     }
 
