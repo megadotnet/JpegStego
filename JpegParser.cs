@@ -79,6 +79,7 @@ internal sealed class JpegParser
                     ParseDHT(segment.Data, structure);
                     break;
                 case JpegMarker.SOS:
+                    ParseSOS(segment.Data, structure);
                     // SOS 之后是压缩数据
                     structure.ScanDataOffset = dataStart + dataLen;
                     pos = dataStart + dataLen;
@@ -174,41 +175,62 @@ internal sealed class JpegParser
         }
     }
 
+    private static void ParseSOS(byte[] data, JpegStructure structure)
+    {
+        if (data.Length < 1) return;
+        byte ns = data[0];
+        int pos = 1;
+        for (int i = 0; i < ns; i++)
+        {
+            if (pos + 1 >= data.Length) break;
+            byte compId = data[pos++];
+            byte tableSelector = data[pos++];
+            byte dcTableId = (byte)((tableSelector >> 4) & 0x0F);
+            byte acTableId = (byte)(tableSelector & 0x0F);
+
+            var comp = structure.Components.FirstOrDefault(c => c.Id == compId);
+            if (comp != null)
+            {
+                comp.DcTableId = dcTableId;
+                comp.AcTableId = acTableId;
+            }
+        }
+    }
+
     private static void CollectScanData(byte[] fileData, int startPos, JpegStructure structure)
     {
         // 扫描数据以 0xFF 0xD9 (EOI) 结束
-        // 0xFF 后面跟 0x00 是字节填充（stuffed），需要跳过
-        // 0xFF 后面跟 0xD0-0xD7 是 RST 标记，需要移除并记录 DC 重置位置
+        // 0xFF 后面跟 0x00 是字节填充（stuffed），保留单个 0xFF
+        // 0xFF 后面跟 0xD0-0xD7 是 RST 标记，在剥离 RST 后保留位流（解码时会在重启间隔处对齐并重置 DC）
         int pos = startPos;
         List<byte> scan = new();
-        int mcuCounter = 0;
-        int bytesSinceLastMCU = 0;
-        int bytesPerMcuEstimate = structure.Components.Sum(c => ((c.SamplingFactor >> 4) & 0x0F) * (c.SamplingFactor & 0x0F)) * 8;
 
         while (pos < fileData.Length - 1)
         {
             if (fileData[pos] == 0xFF)
             {
-                byte next = fileData[pos + 1];
+                // 跳过连续的 0xFF 填充字节
+                while (pos < fileData.Length && fileData[pos] == 0xFF)
+                    pos++;
+                if (pos >= fileData.Length) break;
+
+                byte next = fileData[pos];
+                pos++;
+
                 if (next == 0xD9) // EOI
                     break;
                 if (next == 0x00) // 字节填充
                 {
                     scan.Add(0xFF);
-                    pos += 2;
                     continue;
                 }
-                // RST 标记 0xD0-0xD7：跳过不写入，记录 DC 重置位置
-                if (next >= 0xD0 && next <= 0xD7)
+                if (next >= 0xD0 && next <= 0xD7) // RST 标记
                 {
-                    structure.RestartPositions.Add(mcuCounter);
-                    pos += 2;
                     continue;
                 }
-                // 其他 0xFF xx：写入 0xFF 并继续（某些编码器会生成非标准序列）
+                // 其他非 0x00 标记或数据
                 scan.Add(0xFF);
-                pos += 1;
-                continue;
+                scan.Add(next);
             }
             else
             {

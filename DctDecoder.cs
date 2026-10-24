@@ -84,9 +84,10 @@ internal sealed class DctDecoder
         {
             for (int mcu = 0; mcu < totalMcu; mcu++)
             {
-                // 在重启间隔处重置 DC 系数
+                // 在重启间隔处重置 DC 系数并对齐字节
                 if (_structure.RestartInterval > 0 && mcu > 0 && mcu % _structure.RestartInterval == 0)
                 {
+                    reader.AlignToByte();
                     foreach (var comp in _structure.Components)
                         prevDc[comp.Id] = 0;
                 }
@@ -125,11 +126,11 @@ internal sealed class DctDecoder
 
         // 解码 DC
         int dcSymbol = _dcDecoders[mapping.dcId].DecodeSymbol(reader);
-        int dcValue;
-        if (dcSymbol == 0)
-            dcValue = 0;
-        else
-            dcValue = reader.ReadBits(dcSymbol);
+        int dcValue = 0;
+        if (dcSymbol > 0)
+        {
+            dcValue = ExpandCoeff(reader.ReadBits(dcSymbol), dcSymbol);
+        }
         block[0] = (short)(previousDc + dcValue);
 
         // 解码 AC

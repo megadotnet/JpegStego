@@ -37,16 +37,33 @@ internal sealed class BitWriter
     }
 
     /// <summary>
+    /// 跳过到下一个字节边界（用1填满剩余位）
+    /// </summary>
+    public void AlignToByte()
+    {
+        if (_bitPos > 0)
+        {
+            _currentByte |= (byte)(0xFF >> _bitPos);
+            FlushByte();
+        }
+    }
+
+    /// <summary>
+    /// 写入 Restart 标记（0xFF 0xD0..0xD7）
+    /// </summary>
+    public void WriteRestartMarker(int rstIndex)
+    {
+        AlignToByte();
+        _buffer.Add(0xFF);
+        _buffer.Add((byte)(0xD0 + (rstIndex % 8)));
+    }
+
+    /// <summary>
     /// 完成写入，补齐剩余位（填1）
     /// </summary>
     public byte[] ToByteArray()
     {
-        if (_bitPos > 0)
-        {
-            // 剩余位填 1（符合 JPEG 规范）
-            _currentByte |= (byte)(0xFF >> _bitPos);
-            FlushByte();
-        }
+        AlignToByte();
         return _buffer.ToArray();
     }
 }

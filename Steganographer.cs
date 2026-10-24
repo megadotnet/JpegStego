@@ -19,9 +19,6 @@ internal sealed class Steganographer
         var fileData = File.ReadAllBytes(inputJpeg);
         var structure = JpegParser.Parse(fileData);
 
-        // 确保 Huffman 表包含编码所需的必要符号
-        EnsureHuffmanTables(structure);
-
         var decoder = new DctDecoder(structure);
         var coefficients = decoder.DecodeCoefficients();
 
@@ -42,23 +39,12 @@ internal sealed class Steganographer
         // 嵌入数据
         EmbedBits(coefficients, payload);
 
-        // 重新编码（使用更新后的 Huffman 表）
+        // 重新编码
         var encoder = new DctEncoder(structure);
         byte[] newScanData = encoder.EncodeCoefficients(coefficients);
 
-        // 重建 JPEG 文件（包含更新后的 DHT 段）
+        // 重建 JPEG 文件
         RebuildJpeg(fileData, structure, newScanData, outputJpeg);
-    }
-
-    /// <summary>
-    /// 确保 Huffman 表包含必要的编码符号
-    /// </summary>
-    private static void EnsureHuffmanTables(JpegStructure structure)
-    {
-        foreach (var ht in structure.HuffTablesDC)
-            HuffHelper.EnsureDcTable(ht);
-        foreach (var ht in structure.HuffTablesAC)
-            HuffHelper.EnsureAcTable(ht);
     }
 
     /// <summary>
@@ -117,12 +103,12 @@ internal sealed class Steganographer
     }
 
     /// <summary>
-    /// 判断系数是否可嵌入：|coeff| >= 2 且 coeff != -2
-    /// （-2 的 LSB 是 0，嵌入 1 会变成 -1，绝对值降到 1，破坏提取一致性）
+    /// 判断系数是否可嵌入：|coeff| >= 2
+    /// 对绝对值最低位进行修改，确保系数编码尺寸不会跨级变化
     /// </summary>
     private static bool IsEmbeddable(short coeff)
     {
-        return Math.Abs(coeff) >= 2 && coeff != -2;
+        return Math.Abs(coeff) >= 2;
     }
 
     /// <summary>
@@ -162,8 +148,15 @@ internal sealed class Steganographer
                     int bitIdx = 7 - (bitOffset % 8);
                     bool bit = ((data[byteIdx] >> bitIdx) & 1) != 0;
 
-                    // LSB 替换：修改最低位
-                    block[i] = (short)((block[i] & ~1) | (bit ? 1 : 0));
+                    // LSB 替换：修改绝对值的最低位
+                    short coeff = block[i];
+                    int abs = Math.Abs(coeff);
+                    int targetLsb = bit ? 1 : 0;
+                    if ((abs & 1) != targetLsb)
+                    {
+                        if ((abs & 1) == 1) abs--; else abs++;
+                    }
+                    block[i] = (short)(coeff < 0 ? -abs : abs);
                     bitOffset++;
                 }
             }
@@ -183,7 +176,7 @@ internal sealed class Steganographer
                     if (currentOffset == bitOffset)
                     {
                         bitOffset++;
-                        return (block[i] & 1) != 0;
+                        return (Math.Abs(block[i]) & 1) != 0;
                     }
                     currentOffset++;
                 }
@@ -201,21 +194,11 @@ internal sealed class Steganographer
         writer.Write((byte)0xFF);
         writer.Write(JpegMarker.SOI);
 
-        // 写入所有段直到 SOS，DHT 段使用更新后的数据
+        // 写入所有段直到 SOS
         foreach (var seg in structure.Segments)
         {
             if (seg.Marker == JpegMarker.SOS) break;
-
-            if (seg.Marker == JpegMarker.DHT)
-            {
-                // 使用更新后的 Huffman 表重写 DHT 段
-                WriteUpdatedDht(writer, structure, seg);
-            }
-            else
-            {
-                // 其他段直接复制原始数据
-                WriteSegmentRaw(writer, original, seg);
-            }
+            WriteSegmentRaw(writer, original, seg);
         }
 
         // SOS 段
@@ -235,65 +218,5 @@ internal sealed class Steganographer
         int start = seg.Offset;
         int length = seg.Length;
         writer.Write(original, start, length);
-    }
-
-    private static void WriteUpdatedDht(BinaryWriter writer, JpegStructure structure, JpegSegment originalSeg)
-    {
-        var updatedData = BuildUpdatedDhtData(originalSeg, structure);
-        writer.Write((byte)0xFF);
-        writer.Write(JpegMarker.DHT);
-        ushort length = (ushort)(updatedData.Length + 2);
-        byte[] lenBytes = new byte[2];
-        BinaryPrimitives.WriteUInt16BigEndian(lenBytes.AsSpan(), length);
-        writer.Write(lenBytes);
-        writer.Write(updatedData);
-    }
-
-    private static byte[] BuildUpdatedDhtData(JpegSegment originalSeg, JpegStructure structure)
-    {
-        var result = new List<byte>();
-        int pos = 0;
-        var data = originalSeg.Data;
-
-        while (pos < data.Length)
-        {
-            if (pos >= data.Length) break;
-            byte classAndId = data[pos++];
-            byte tableClass = (byte)((classAndId >> 4) & 0x0F);
-            byte id = (byte)(classAndId & 0x0F);
-
-            // 找到对应的更新表
-            HuffTable? match;
-            if (tableClass == 0)
-                match = structure.HuffTablesDC.FirstOrDefault(t => t.Id == id);
-            else
-                match = structure.HuffTablesAC.FirstOrDefault(t => t.Id == id);
-
-            if (match is null)
-            {
-                // 找不到匹配的，安全复制原始数据（带边界检查）
-                result.Add(classAndId);
-                if (pos + 16 > data.Length) break;
-                var origBits = new byte[16];
-                Array.Copy(data, pos, origBits, 0, 16);
-                result.AddRange(origBits);
-                pos += 16;
-                int valCount = origBits.Sum(b => b);
-                if (pos + valCount > data.Length) valCount = data.Length - pos;
-                var origVals = new byte[valCount];
-                Array.Copy(data, pos, origVals, 0, valCount);
-                result.AddRange(origVals);
-                pos += valCount;
-            }
-            else
-            {
-                // 使用更新后的表
-                result.Add(classAndId);
-                result.AddRange(match.Bits);
-                result.AddRange(match.Values);
-            }
-        }
-
-        return result.ToArray();
     }
 }
